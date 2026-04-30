@@ -1,19 +1,16 @@
-const WebSocket = require("ws");
-const http = require("http");
+const { WebSocketServer } = require('ws');
+const http = require('http');
 
-// একটি HTTP সার্ভার তৈরি করা (Render-এর জন্য এটি বাধ্যতামূলক)
 const server = http.createServer((req, res) => {
     res.writeHead(200);
-    res.end("Game Server is Running");
+    res.end('Game Server is Running');
 });
 
-const PORT = process.env.PORT || 3000;
-const wss = new WebSocket.Server({ server }); // সরাসরি পোর্ট না দিয়ে সার্ভার ব্যবহার করা
+const wss = new WebSocketServer({ server });
+const players = new Map();
 
-let players = new Map();
-
-// গালি ফিল্টার করার জন্য লিস্ট (ইচ্ছেমতো আরও যোগ করো)
-const badWords = ["গালি১", "গালি২", "গালি৩"];
+// ৪ নম্বর রুলস: গালি ফিল্টার লিস্ট
+const badWords = ["গালি১", "গালি২", "গালি৩"]; 
 
 function filterMessage(text) {
     let filteredText = text;
@@ -24,68 +21,6 @@ function filterMessage(text) {
     return filteredText;
 }
 
-wss.on("connection", (ws) => {
-    console.log("Player connected");
-
-    ws.on("message", (message) => {
-        try {
-            let data = JSON.parse(message);
-
-            // ১. গেমে জয়েন করা
-            if (data.type === "join_game") {
-                players.set(ws, {
-                    name: data.name,
-                    canSpeak: true, // এটি দিয়ে পার্লামেন্টের স্পিকার কন্ট্রোল করবে
-                    team: data.team || "No Team"
-                });
-            }
-
-            // ২. চ্যাট মেসেজ এবং গালি ফিল্টার
-            if (data.type === "chat_message") {
-                let playerInfo = players.get(ws);
-                if (playerInfo && playerInfo.canSpeak) {
-                    
-                    let filteredMsg = filterMessage(data.message);
-
-                    const response = JSON.stringify({
-                        type: "chat",
-                        sender: playerInfo.name,
-                        message: filteredMsg
-                    });
-
-                    // সবাইকে মেসেজ পাঠানো (Broadcast)
-                    wss.clients.forEach(client => {
-                        if (client.readyState === WebSocket.OPEN) {
-                            client.send(response);
-                        }
-                    });
-                }
-            }
-
-        } catch (e) {
-            console.error("JSON Error: ", e);
-        }
-    });
-
-    ws.on("close", () => {
-        players.delete(ws);
-        console.log("Player disconnected");
-    });
-});
-
-// সার্ভারটি লিসেন করা
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
-
-const server = http.createServer((req, res) => {
-    res.writeHead(200);
-    res.end('Game Server Active');
-});
-
-const wss = new WebSocketServer({ server });
-const players = new Map(); // প্লেয়ার ডাটা স্টোর করার জন্য
-
 wss.on('connection', (ws) => {
     console.log('New connection established');
 
@@ -93,59 +28,83 @@ wss.on('connection', (ws) => {
         try {
             const parsedData = JSON.parse(data.toString());
 
-            // ১. প্লেয়ার যখন জয়েন করবে
+            // ১ ও ৬ নম্বর রুলস: প্লেয়ার জয়েন এবং প্রোফাইল সেটআপ
             if (parsedData.type === "join") {
                 players.set(ws, { 
                     name: parsedData.name, 
-                    team: parsedData.team, // যেমন: "BlackHawks"
-                    rank: parsedData.rank 
+                    team: parsedData.team || "No Team",
+                    rank: parsedData.rank || "Soldier",
+                    canSpeak: true // ১ নম্বর রুলস: পার্লামেন্ট স্পিকার কন্ট্রোল
                 });
+                console.log(`${parsedData.name} joined as ${parsedData.rank}`);
             }
 
-            // ২. টিম চ্যাট (শুধু নিজের টিমের কাছে যাবে)
-            if (parsedData.type === "team_chat") {
-                const senderInfo = players.get(ws);
-                if (senderInfo) {
+            // ৪ নম্বর রুলস: চ্যাট সিস্টেম (কমিউনিটি ও টিম চ্যাট)
+            if (parsedData.type === "chat") {
+                const player = players.get(ws);
+                if (player && player.canSpeak) {
+                    let filteredMsg = filterMessage(parsedData.message);
+                    
                     const response = JSON.stringify({
-                        type: "team_msg",
-                        sender: senderInfo.name,
-                        text: parsedData.message
+                        type: parsedData.chatType, // "community" or "team"
+                        sender: player.name,
+                        rank: player.rank,
+                        message: filteredMsg
                     });
 
                     wss.clients.forEach((client) => {
-                        if (client.readyState === 1 && players.get(client)?.team === senderInfo.team) {
-                            client.send(response);
+                        if (client.readyState === 1) {
+                            const target = players.get(client);
+                            // যদি কমিউনিটি চ্যাট হয় সবাইকে পাঠাও, টিম চ্যাট হলে শুধু নিজের টিমকে
+                            if (parsedData.chatType === "community") {
+                                client.send(response);
+                            } else if (parsedData.chatType === "team" && target?.team === player.team) {
+                                client.send(response);
+                            }
                         }
                     });
                 }
             }
 
-            // ৩. অ্যাটাক ওয়ার্নিং (টার্গেট টিমকে সাবধান করা)
+            // ১০ নম্বর রুলস: অ্যাটাক ওয়ার্নিং সিস্টেম
             if (parsedData.type === "attack") {
                 const attackNotice = JSON.stringify({
                     type: "warning",
-                    message: `WARNING! Your territory "${parsedData.zone}" is under attack by ${parsedData.attacker_team}!`
+                    targetZone: parsedData.zone,
+                    attacker: parsedData.attacker_team,
+                    message: `সতর্কবার্তা! "${parsedData.zone}" জোনে ${parsedData.attacker_team} অ্যাটাক করেছে!`
                 });
 
                 wss.clients.forEach((client) => {
-                    // শুধু যে টিমের ওপর অ্যাটাক হয়েছে তাদের কাছে ওয়ার্নিং যাবে
                     if (client.readyState === 1 && players.get(client)?.team === parsedData.target_team) {
                         client.send(attackNotice);
                     }
                 });
             }
 
+            // ১ নম্বর রুলস: পার্লামেন্ট স্পিকার কমান্ড (মিউট/আনমিউট)
+            if (parsedData.type === "parliament_control") {
+                // এখানে হোস্ট বা স্পিকারের আইডি চেক করার লজিক দিতে পারো
+                wss.clients.forEach((client) => {
+                    let p = players.get(client);
+                    if (p && p.name === parsedData.targetPlayer) {
+                        p.canSpeak = parsedData.allow;
+                    }
+                });
+            }
+
         } catch (e) {
-            console.log("Error processing data");
+            console.log("Error: Invalid JSON Data");
         }
     });
 
     ws.on('close', () => {
         players.delete(ws);
+        console.log('Player left');
     });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Server is live on port ${PORT}`);
+    console.log(`Server live on port ${PORT}`);
 });
