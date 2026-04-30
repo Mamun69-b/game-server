@@ -1,11 +1,38 @@
-{
-  "name": "game-server",
-  "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "ws": "^8.13.0"
-  }
-}
+const { WebSocketServer } = require('ws');
+const http = require('http');
+
+// একটি সাধারণ HTTP সার্ভার তৈরি করা (Render-এর জন্য প্রয়োজন)
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Game Server is Running\n');
+});
+
+// HTTP সার্ভারের সাথে WebSocket যুক্ত করা
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', (ws) => {
+    console.log('একজন প্লেয়ার কানেক্ট হয়েছে!');
+
+    ws.on('message', (data) => {
+        // ডেটা রিসিভ করা (বাইনারি থেকে টেক্সটে রূপান্তর)
+        const message = data.toString();
+        console.log('মেসেজ এসেছে:', message);
+
+        // যারা কানেক্টেড আছে সবার কাছে মেসেজটি পাঠিয়ে দেওয়া (Broadcast)
+        wss.clients.forEach((client) => {
+            if (client.readyState === 1) { // ১ মানে হলো কানেকশন ওপেন আছে
+                client.send(message);
+            }
+        });
+    });
+
+    ws.on('close', () => {
+        console.log('প্লেয়ার ডিসকানেক্ট হয়েছে');
+    });
+});
+
+// Render অটোমেটিক পোর্ট সেট করে দেবে, না হলে ৩০০০ পোর্টে চলবে
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`সার্ভার চলছে পোর্টে: ${PORT}`);
+});
