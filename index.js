@@ -77,3 +77,75 @@ wss.on("connection", (ws) => {
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
+
+const server = http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end('Game Server Active');
+});
+
+const wss = new WebSocketServer({ server });
+const players = new Map(); // প্লেয়ার ডাটা স্টোর করার জন্য
+
+wss.on('connection', (ws) => {
+    console.log('New connection established');
+
+    ws.on('message', (data) => {
+        try {
+            const parsedData = JSON.parse(data.toString());
+
+            // ১. প্লেয়ার যখন জয়েন করবে
+            if (parsedData.type === "join") {
+                players.set(ws, { 
+                    name: parsedData.name, 
+                    team: parsedData.team, // যেমন: "BlackHawks"
+                    rank: parsedData.rank 
+                });
+            }
+
+            // ২. টিম চ্যাট (শুধু নিজের টিমের কাছে যাবে)
+            if (parsedData.type === "team_chat") {
+                const senderInfo = players.get(ws);
+                if (senderInfo) {
+                    const response = JSON.stringify({
+                        type: "team_msg",
+                        sender: senderInfo.name,
+                        text: parsedData.message
+                    });
+
+                    wss.clients.forEach((client) => {
+                        if (client.readyState === 1 && players.get(client)?.team === senderInfo.team) {
+                            client.send(response);
+                        }
+                    });
+                }
+            }
+
+            // ৩. অ্যাটাক ওয়ার্নিং (টার্গেট টিমকে সাবধান করা)
+            if (parsedData.type === "attack") {
+                const attackNotice = JSON.stringify({
+                    type: "warning",
+                    message: `WARNING! Your territory "${parsedData.zone}" is under attack by ${parsedData.attacker_team}!`
+                });
+
+                wss.clients.forEach((client) => {
+                    // শুধু যে টিমের ওপর অ্যাটাক হয়েছে তাদের কাছে ওয়ার্নিং যাবে
+                    if (client.readyState === 1 && players.get(client)?.team === parsedData.target_team) {
+                        client.send(attackNotice);
+                    }
+                });
+            }
+
+        } catch (e) {
+            console.log("Error processing data");
+        }
+    });
+
+    ws.on('close', () => {
+        players.delete(ws);
+    });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Server is live on port ${PORT}`);
+});
