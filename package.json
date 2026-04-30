@@ -1,65 +1,11 @@
-const { WebSocketServer } = require('ws');
-const http = require('http');
-
-const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Game Server is Running\n');
-});
-
-const wss = new WebSocketServer({ server });
-const players = new Map(); // এখানে প্লেয়ারদের ডাটা থাকবে
-
-// গালি ফিল্টার
-const badWords = ["গালি১", "গালি২"]; 
-
-wss.on('connection', (ws) => {
-    console.log('একজন প্লেয়ার কানেক্ট হয়েছে!');
-
-    ws.on('message', (data) => {
-        try {
-            const parsedData = JSON.parse(data.toString());
-
-            // প্লেয়ার জয়েন করলে তার তথ্য সেভ করা
-            if (parsedData.type === "join") {
-                players.set(ws, { 
-                    name: parsedData.name, 
-                    team: parsedData.team, 
-                    rank: parsedData.rank 
-                });
-            }
-
-            // চ্যাট মেসেজ হ্যান্ডেল করা
-            if (parsedData.type === "chat") {
-                let message = parsedData.message;
-                
-                // গালি ফিল্টার করা
-                badWords.forEach(word => {
-                    message = message.replace(new RegExp(word, 'gi'), '###');
-                });
-
-                const response = JSON.stringify({
-                    type: "chat",
-                    sender: players.get(ws)?.name || "Unknown",
-                    text: message
-                });
-
-                // সবাইকে পাঠানো
-                wss.clients.forEach((client) => {
-                    if (client.readyState === 1) client.send(response);
-                });
-            }
-        } catch (e) {
-            console.log("সাধারণ টেক্সট এসেছে বা JSON ফরম্যাটে ভুল আছে");
-        }
-    });
-
-    ws.on('close', () => {
-        players.delete(ws);
-        console.log('প্লেয়ার ডিসকানেক্ট হয়েছে');
-    });
-});
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`সার্ভার চলছে পোর্টে: ${PORT}`);
-});
+{
+  "name": "game-server",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.13.0"
+  }
+}
