@@ -1,49 +1,42 @@
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
-
-let players = {};
-
-io.on("connection", (socket) => {
-    console.log("Player connected:", socket.id);
-
-    socket.on("join_game", (data) => {
-        players[socket.id] = {
-            name: data.name,
-            canSpeak: false
-        };
-    });
-
-    socket.on("request_speak", () => {
-        io.emit("notify_speaker", {
-            player: socket.id
-        });
-    });
-
-    socket.on("approve_speak", (playerId) => {
-        if (players[playerId]) {
-            players[playerId].canSpeak = true;
-            io.to(playerId).emit("speak_allowed");
-        }
-    });
-
-    socket.on("chat_message", (msg) => {
-        if (players[socket.id] && players[socket.id].canSpeak) {
-            io.emit("chat_message", msg);
-        }
-    });
-
-    socket.on("disconnect", () => {
-        delete players[socket.id];
-    });
-});
+const WebSocket = require("ws");
 
 const PORT = process.env.PORT || 3000;
+const wss = new WebSocket.Server({ port: PORT });
 
-server.listen(PORT, () => {
-    console.log("Server running...");
+let players = new Map();
+
+wss.on("connection", (ws) => {
+    console.log("Player connected");
+
+    ws.on("message", (message) => {
+        let data = JSON.parse(message);
+
+        // Join game
+        if (data.type === "join_game") {
+            players.set(ws, {
+                name: data.name,
+                canSpeak: true
+            });
+        }
+
+        // Chat message
+        if (data.type === "chat_message") {
+            if (players.get(ws)) {
+                wss.clients.forEach(client => {
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(JSON.stringify({
+                            type: "chat",
+                            message: data.message
+                        }));
+                    }
+                });
+            }
+        }
+    });
+
+    ws.on("close", () => {
+        players.delete(ws);
+    });
 });
+
+console.log("Server running...");
